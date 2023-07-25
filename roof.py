@@ -86,8 +86,7 @@ class Token:
             self.position_end = position_end
 
     def __repr__(self):
-        if self.value:
-            return f'{self.type}:{self.value}'
+        if self.value: return f'{self.type}:{self.value}'
         return f'{self.type}'
 
 
@@ -136,7 +135,7 @@ class Lexer:
                 char = self.current_char
                 self.advance()
                 return [], IllegalCharError(position_start, self.position, "'" + char + "'")
-        tokens.append(Token(TT_END_OF_FILE))
+        tokens.append(Token(TT_END_OF_FILE, position_start=self.position))
         return tokens, None
 
     def make_number(self):
@@ -220,8 +219,10 @@ class Parser:
     def parse(self):
         result = self.expression()
         if not result.error and self.current_token.type != TT_END_OF_FILE:
-            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
-                                                     "Expected '+', '-', '*' or '/'"))
+            return result.failure(InvalidSyntaxError(
+                self.current_token.position_start, self.current_token.position_end,
+                "Expected '+', '-', '*' or '/'"
+            ))
         return result
 
     def factor(self):
@@ -231,7 +232,7 @@ class Parser:
         if token.type in (TT_INT, TT_FLOAT):
             result.register(self.advance())
             return result.success(NumberNode(token))
-        return result.failure(InvalidSyntaxError(token.position_start, token.position_end, "Expected int or float"))
+        return result.failure(InvalidSyntaxError(token.position_start, token.position_end, "Expected INT or FLOAT"))
 
     def term(self):
         return self.binary_operation(self.factor, (TT_MULTIPLY, TT_DIV))
@@ -239,12 +240,13 @@ class Parser:
     def expression(self):
         return self.binary_operation(self.term, (TT_PLUS, TT_MINUS))
 
-    def binary_operation(self, function, operation_tokens):
+    def binary_operation(self, function, operators):
         result = ParseResult()
         left = result.register(function())
         if result.error:
             return result
-        while self.current_token.type in operation_tokens:
+
+        while self.current_token.type in operators:
             operator_token = self.current_token
             result.register(self.advance())
             right = result.register(function())
@@ -258,13 +260,14 @@ class Parser:
 # RUN
 
 def run(file_name, text):
-    # GENERATE TOKENS
+    # Generate tokens
     lexer = Lexer(file_name, text)
     tokens, error = lexer.make_tokens()
     if error:
         return None, error
-    # GENERATE ABSTRACT SYNTAX TREE
-    parser = Parser(tokens)
-    abstract_syntax_tree = parser.parse()
 
-    return abstract_syntax_tree.node, abstract_syntax_tree.error
+    # Generate AST = abstract syntax tree
+    parser = Parser(tokens)
+    ast = parser.parse()
+
+    return ast.node, ast.error
