@@ -1,5 +1,7 @@
 expression  : term ((PLUS|MINUS) term)*
 
-term    : factor ((MULTIPLY|DIV) factor)*
+term        : factor ((MULTIPLY|DIV) factor)*
 
-factor  : INT|FLOAT
+factor      : INT|FLOAT
+            : (PLUS|MINUS) factor
+            : LBRACKET expression RBRACKET
