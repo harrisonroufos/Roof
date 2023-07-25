@@ -179,6 +179,16 @@ class BinaryOperationNode:
         return f"({self.left_node}, {self.operator_token}, {self.right_node})"
 
 
+class UnaryOperationNode:
+
+    def __init__(self, operator_token, node):
+        self.operator_token = operator_token
+        self.node = node
+
+    def __repr__(self):
+        return f"{self.operator_token}, {self.node}"
+
+
 # PARSER RESULTS
 
 class ParseResult:
@@ -229,10 +239,30 @@ class Parser:
         result = ParseResult()
         token = self.current_token
 
-        if token.type in (TT_INT, TT_FLOAT):
+        if token.type in (TT_PLUS, TT_MINUS):
+            result.register(self.advance())
+            factor = result.register(self.factor())
+            if result.error:
+                return result
+            return result.success(UnaryOperationNode(token, factor))
+
+        elif token.type in (TT_INT, TT_FLOAT):
             result.register(self.advance())
             return result.success(NumberNode(token))
-        return result.failure(InvalidSyntaxError(token.position_start, token.position_end, "Expected INT or FLOAT"))
+
+        elif token.type == TT_LBRACKET:
+            result.register(self.advance())
+            expression = result.register(self.expression())
+            if result.error:
+                return result
+            if self.current_token.type == TT_RBRACKET:
+                result.register(self.advance())
+                return result.success(expression)
+        else:
+            return result.failure(InvalidSyntaxError(self.current_token.position_start,
+                                                     self.current_token.position_end, "Expected ')'"))
+
+        return result.failure(InvalidSyntaxError(token.position_start, token.position_end, "Expected int or float"))
 
     def term(self):
         return self.binary_operation(self.factor, (TT_MULTIPLY, TT_DIV))
