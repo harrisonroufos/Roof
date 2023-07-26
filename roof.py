@@ -258,9 +258,9 @@ class Parser:
             if self.current_token.type == TT_RBRACKET:
                 result.register(self.advance())
                 return result.success(expression)
-        else:
-            return result.failure(InvalidSyntaxError(self.current_token.position_start,
-                                                     self.current_token.position_end, "Expected ')'"))
+            else:
+                return result.failure(InvalidSyntaxError(self.current_token.position_start,
+                                                         self.current_token.position_end, "Expected ')'"))
 
         return result.failure(InvalidSyntaxError(token.position_start, token.position_end, "Expected int or float"))
 
