@@ -94,6 +94,7 @@ TT_DIV = "DIV"
 TT_LBRACKET = "LBRACKET"
 TT_RBRACKET = "RBRACKET"
 TT_END_OF_FILE = "END_OF_FILE"
+TT_POWER_OF = "POWER_OF"
 
 
 class Token:
@@ -153,6 +154,9 @@ class Lexer:
                 self.advance()
             elif self.current_char == ")":
                 tokens.append(Token(TT_RBRACKET, position_start=self.position))
+                self.advance()
+            elif self.current_char == "^":
+                tokens.append((Token(TT_POWER_OF, position_start=self.position)))
                 self.advance()
             else:
                 position_start = self.position.copy()
@@ -268,18 +272,11 @@ class Parser:
             ))
         return result
 
-    def factor(self):
+    def atom(self):
         result = ParseResult()
         token = self.current_token
 
-        if token.type in (TT_PLUS, TT_MINUS):
-            result.register(self.advance())
-            factor = result.register(self.factor())
-            if result.error:
-                return result
-            return result.success(UnaryOperationNode(token, factor))
-
-        elif token.type in (TT_INT, TT_FLOAT):
+        if token.type in (TT_INT, TT_FLOAT):
             result.register(self.advance())
             return result.success(NumberNode(token))
 
@@ -294,8 +291,24 @@ class Parser:
             else:
                 return result.failure(InvalidSyntaxError(self.current_token.position_start,
                                                          self.current_token.position_end, "Expected ')'"))
+        return result.failure((InvalidSyntaxError(token.position_start,
+                                                  token.position_end, "Expected int, float, '+', '-' or '('")))
 
-        return result.failure(InvalidSyntaxError(token.position_start, token.position_end, "Expected int or float"))
+    def power(self):
+        return self.binary_operation(self.atom, (TT_POWER_OF,), self.factor)
+
+    def factor(self):
+        result = ParseResult()
+        token = self.current_token
+
+        if token.type in (TT_PLUS, TT_MINUS):
+            result.register(self.advance())
+            factor = result.register(self.factor())
+            if result.error:
+                return result
+            return result.success(UnaryOperationNode(token, factor))
+
+        return self.power()
 
     def term(self):
         return self.binary_operation(self.factor, (TT_MULTIPLY, TT_DIV))
@@ -303,16 +316,18 @@ class Parser:
     def expression(self):
         return self.binary_operation(self.term, (TT_PLUS, TT_MINUS))
 
-    def binary_operation(self, function, operators):
+    def binary_operation(self, function_a, operators, function_b=None):
+        if function_b == None:
+            function_b = function_a
         result = ParseResult()
-        left = result.register(function())
+        left = result.register(function_a())
         if result.error:
             return result
 
         while self.current_token.type in operators:
             operator_token = self.current_token
             result.register(self.advance())
-            right = result.register(function())
+            right = result.register(function_b())
             if result.error:
                 return result
             left = BinaryOperationNode(left, operator_token, right)
@@ -375,6 +390,10 @@ class Number:
                 return None, RTError(other.position_start, other.position_end, "Division by zero", self.context)
             return Number(self.value / other.value).set_context(self.context), None
 
+    def power_of(self, other):
+        if isinstance(other, Number):
+            return Number(self.value ** other.value).set_context(self.context), None
+
     def __repr__(self):
         return str(self.value)
 
@@ -420,6 +439,8 @@ class Interpreter:
             result, error = left.multiplied_by(right)
         elif node.operator_token.type == TT_DIV:
             result, error = left.divided_by(right)
+        elif node.operator_token.type == TT_POWER_OF:
+            result, error = left.power_of(right)
 
         if error:
             return run_time_result.failure(error)
