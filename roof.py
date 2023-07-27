@@ -276,21 +276,24 @@ class ParseResult:
     def __init__(self):
         self.error = None
         self.node = None
+        self.advance_count = 0
+
+    def register_advancement(self):
+        self.advance_count += 1
 
     def register(self, result):
-        if isinstance(result, ParseResult):
-            if result.error:
-                self.error = result.error
-            return result.node
-
-        return result
+        self.advance_count += result.advance_count
+        if result.error:
+            self.error = result.error
+        return result.node
 
     def success(self, node):
         self.node = node
         return self
 
     def failure(self, error):
-        self.error = error
+        if not self.error or self.advance_count == 0:
+            self.error = error
         return self
 
 
@@ -321,25 +324,31 @@ class Parser:
         token = self.current_token
 
         if token.type in (TT_INT, TT_FLOAT):
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             return result.success(NumberNode(token))
+
         elif token.type == TT_IDENTIFIER:
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             return result.success(VariableAccessNode(token))
 
         elif token.type == TT_LBRACKET:
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             expression = result.register(self.expression())
             if result.error:
                 return result
             if self.current_token.type == TT_RBRACKET:
-                result.register(self.advance())
+                result.register_advancement()
+                self.advance()
                 return result.success(expression)
             else:
                 return result.failure(InvalidSyntaxError(self.current_token.position_start,
                                                          self.current_token.position_end, "Expected ')'"))
         return result.failure((InvalidSyntaxError(token.position_start,
-                                                  token.position_end, "Expected int, float, '+', '-' or '('")))
+                                                  token.position_end,
+                                                  "Expected int, float, identifier, '+', '-' or '('")))
 
     def power(self):
         return self.binary_operation(self.atom, (TT_POWER_OF,), self.factor)
@@ -349,7 +358,8 @@ class Parser:
         token = self.current_token
 
         if token.type in (TT_PLUS, TT_MINUS):
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             factor = result.register(self.factor())
             if result.error:
                 return result
@@ -363,27 +373,34 @@ class Parser:
     def expression(self):
         result = ParseResult()
         if self.current_token.matches(TT_KEYWORD, "VAR"):
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
 
             if self.current_token.type != TT_IDENTIFIER:
                 return result.failure(
                     InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
                                        "Expected identifier"))
             var_name = self.current_token
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
 
             if self.current_token.type != TT_EQUALS:
                 return result.failure(
                     InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
                                        "Expected '='"))
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
 
             expression = result.register(self.expression())
             if result.error:
                 return result
             return result.success(VariableAssignNode(var_name, expression))
 
-        return self.binary_operation(self.term, (TT_PLUS, TT_MINUS))
+        node = result.register(self.binary_operation(self.term, (TT_PLUS, TT_MINUS)))
+        if result.error:
+            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+                                                     "Expected 'VAR', int, float, identifier, '+', '-' or '('"))
+        return result.success(node)
 
     def binary_operation(self, function_a, operators, function_b=None):
         if function_b == None:
@@ -395,7 +412,8 @@ class Parser:
 
         while self.current_token.type in operators:
             operator_token = self.current_token
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             right = result.register(function_b())
             if result.error:
                 return result
@@ -463,6 +481,12 @@ class Number:
         if isinstance(other, Number):
             return Number(self.value ** other.value).set_context(self.context), None
 
+    def copy(self):
+        copy = Number(self.value)
+        copy.set_position(self.position_start, self.position_end)
+        copy.set_context(self.context)
+        return copy
+
     def __repr__(self):
         return str(self.value)
 
@@ -520,6 +544,7 @@ class Interpreter:
         if not value:
             return result.failure(
                 RTError(node.position_start, node.position_end, f"'{var_name}' is not defined", context))
+        value = value.copy().set_position(node.position_start, node.position_end)
         return result.success(value)
 
     def visit_VariableAssignNode(self, node, context):
