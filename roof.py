@@ -115,7 +115,7 @@ TT_GREATER_THAN = "GREATER_THAN"
 TT_LESS_THAN_EQUAL = "LESS_THAN_EQUAL"
 TT_GREATER_THAN_EQUAL = "GREATER_THAN_EQUAL"
 
-KEYWORDS = ["VAR", "AND", "OR", "NOT"]
+KEYWORDS = ["VAR", "AND", "OR", "NOT", "IF", "THEN", "ELIF", "ELSE"]
 
 
 class Token:
@@ -338,6 +338,15 @@ class UnaryOperationNode:
         return f"{self.operator_token}, {self.node}"
 
 
+class IfNode:
+    def __init__(self, cases, else_case):
+        self.cases = cases
+        self.else_case = else_case
+
+        self.position_start = self.cases[0][0]
+        self.position_end = (self.else_case or self.cases[len(self.cases) - 1][0]).position_end
+
+
 # PARSER RESULTS
 
 class ParseResult:
@@ -387,6 +396,65 @@ class Parser:
             ))
         return result
 
+    def if_expr(self):
+        result = ParseResult()
+        cases = []
+        else_case = None
+
+        if not self.current_token.matches(TT_KEYWORD, "IF"):
+            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+                                                     f"Expected 'IF'"))
+
+        result.register_advancement()
+        self.advance()
+
+        condition = result.register(self.expression())
+        if result.error:
+            return result
+
+        if not self.current_token.matches(TT_KEYWORD, "THEN"):
+            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+                                                     f"Expected 'THEN'"))
+
+        result.register_advancement()
+        self.advance()
+
+        expr = result.register(self.expression())
+        if result.error:
+            return result
+        cases.append((condition, expr))
+
+        while self.current_token.matches(TT_KEYWORD, "ELIF"):
+            result.register_advancement()
+            self.advance()
+
+            condition = result.register(self.expression())
+            if result.error:
+                return result
+
+            if not self.current_token.matches(TT_KEYWORD, "THEN"):
+                return result.failure(
+                    InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+                                       f"Expected 'THEN'"))
+
+            result.register_advancement()
+            self.advance()
+
+            expr = result.register(self.expression())
+            if result.error:
+                return result
+            cases.append((condition, expr))
+
+        if self.current_token.matches(TT_KEYWORD, "ELSE"):
+            result.register_advancement()
+            self.advance()
+
+            else_case = result.register(self.expression())
+            if result.error:
+                return result
+
+        return result.success(IfNode(cases, else_case))
+
     def atom(self):
         result = ParseResult()
         token = self.current_token
@@ -414,6 +482,13 @@ class Parser:
             else:
                 return result.failure(InvalidSyntaxError(self.current_token.position_start,
                                                          self.current_token.position_end, "Expected ')'"))
+
+        elif token.matches(TT_KEYWORD, "IF"):
+            if_expr = result.register(self.if_expr())
+            if result.error:
+                return result
+            return result.success(if_expr)
+
         return result.failure((InvalidSyntaxError(token.position_start,
                                                   token.position_end,
                                                   "Expected int, float, identifier, '+', '-' or '('")))
@@ -455,10 +530,12 @@ class Parser:
             return result.success(UnaryOperationNode(operator_token, node))
 
         node = result.register(self.binary_operation(self.arith_expr, (TT_EQUALS_EQUALS, TT_NOT_EQUALS, TT_LESS_THAN,
-                                                                       TT_GREATER_THAN, TT_LESS_THAN_EQUAL, TT_GREATER_THAN_EQUAL)))
+                                                                       TT_GREATER_THAN, TT_LESS_THAN_EQUAL,
+                                                                       TT_GREATER_THAN_EQUAL)))
 
         if result.error:
-            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end, "Expected int, float, identifier, '+', '-', '(', 'NOT'"))
+            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+                                                     "Expected int, float, identifier, '+', '-', '(', 'NOT'"))
         return result.success(node)
 
     def expression(self):
@@ -614,6 +691,9 @@ class Number:
         copy.set_context(self.context)
         return copy
 
+    def is_true(self):
+        return self.value != 0
+
     def __repr__(self):
         return str(self.value)
 
@@ -742,6 +822,28 @@ class Interpreter:
             run_time_result.failure(error)
         else:
             return run_time_result.success(number.set_position(node.position_start, node.position_end))
+
+    def visit_IfNode(self, node, context):
+        result = RunTimeResults()
+
+        for condition, expr in node.cases:
+            condition_value = result.register(self.visit(condition, context))
+            if result.error:
+                return result
+
+            if condition_value.is_true():
+                expr_value = result.register(self.visit(expr, context))
+                if result.error:
+                    return result
+                return result.success(expr_value)
+
+        if node.else_case:
+            else_value = result.register(self.visit(node.else_case, context))
+            if result.error:
+                return result
+            return result.success(else_value)
+
+        return result.success(None)
 
 
 # RUN

@@ -16,6 +16,9 @@ power       : atom (POWER_OF factor)*
 atom        : INT|FLOAT|IDENTIFIER
             : LBRACKET expression RBRACKET
 
+if-expr     : KEYWORD:IF expr KEYWORD:THEN expr
+              (KEYWORD:ELIF expr KEYWORD:THEN expr)*
+              (KEYWORD:ELSE expr)?
 
 
 
