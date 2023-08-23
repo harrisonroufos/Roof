@@ -2,6 +2,8 @@
 TOKENS
 LEXER
 """
+import resource
+
 from string_with_arrows import *
 import string
 
@@ -42,6 +44,11 @@ class RTError(Error):
     def __init__(self, position_start, position_end, details, context):
         super().__init__(position_start, position_end, "Runtime Error", details)
         self.context = context
+
+
+class ExpectedCharError:
+    def __init__(self, position_start, position_end, details):
+        super().__init__(position_start, position_end, "Expected Character", details)
 
     def as_string(self):
         result = self.generate_traceback()
@@ -101,8 +108,14 @@ TT_POWER_OF = "POWER_OF"
 TT_IDENTIFIER = "IDENTIFIER"
 TT_KEYWORD = "KEYWORD"
 TT_EQUALS = "EQUALS"
+TT_EQUALS_EQUALS = "EQUALS_EQUALS"
+TT_NOT_EQUALS = "NOT_EQUALS"
+TT_LESS_THAN = "LESS_THAN"
+TT_GREATER_THAN = "GREATER_THAN"
+TT_LESS_THAN_EQUAL = "LESS_THAN_EQUAL"
+TT_GREATER_THAN_EQUAL = "GREATER_THAN_EQUAL"
 
-KEYWORDS = ["VAR"]
+KEYWORDS = ["VAR", "AND", "OR", "NOT"]
 
 
 class Token:
@@ -171,9 +184,20 @@ class Lexer:
             elif self.current_char == "^":
                 tokens.append((Token(TT_POWER_OF, position_start=self.position)))
                 self.advance()
+            # elif self.current_char == "=":
+            #     tokens.append((Token(TT_EQUALS, position_start=self.position)))
+            #     self.advance()
             elif self.current_char == "=":
-                tokens.append((Token(TT_EQUALS, position_start=self.position)))
-                self.advance()
+                tokens.append(self.make_equals())
+            elif self.current_char == "<":
+                tokens.append(self.make_less_than())
+            elif self.current_char == '>':
+                tokens.append(self.make_greater_than())
+            elif self.current_char == "!":
+                token, error = self.make_not_equals()
+                if error:
+                    return [], error
+                tokens.append(token)
             else:
                 position_start = self.position.copy()
                 char = self.current_char
@@ -211,6 +235,50 @@ class Lexer:
 
         token_type = TT_KEYWORD if id_str in KEYWORDS else TT_IDENTIFIER
         return Token(token_type, id_str, position_start, self.position)
+
+    def make_not_equals(self):
+        position_start = self.position.copy()
+        self.advance()
+
+        if self.current_char == "=":
+            self.advance()
+            return Token(TT_NOT_EQUALS, position_start=position_start, position_end=self.position), None
+
+        self.advance()
+        return None, ExpectedCharError(position_start, self.position, "'=' (after '!')")
+
+    def make_equals(self):
+        token_type = TT_EQUALS
+        position_start = self.position.copy()
+        self.advance()
+
+        if self.current_char == "=":
+            self.advance()
+            token_type = TT_EQUALS_EQUALS
+
+        return Token(token_type, position_start=position_start, position_end=self.position)
+
+    def make_less_than(self):
+        token_type = TT_LESS_THAN
+        position_start = self.position.copy()
+        self.advance()
+
+        if self.current_char == "=":
+            self.advance()
+            token_type = TT_LESS_THAN_EQUAL
+
+        return Token(token_type, position_start=position_start, position_end=self.position)
+
+    def make_greater_than(self):
+        token_type = TT_GREATER_THAN
+        position_start = self.position.copy()
+        self.advance()
+
+        if self.current_char == '=':
+            self.advance()
+            tok_type = TT_GREATER_THAN_EQUAL
+
+        return Token(token_type, position_start=position_start, position_end=self.position)
 
 
 # NODES
@@ -370,6 +438,29 @@ class Parser:
     def term(self):
         return self.binary_operation(self.factor, (TT_MULTIPLY, TT_DIV))
 
+    def arith_expr(self):
+        return self.binary_operation(self.term, (TT_PLUS, TT_MINUS))
+
+    def comp_expr(self):
+        result = ParseResult()
+
+        if self.current_token.matches(TT_KEYWORD, "NOT"):
+            operator_token = self.current_token
+            result.register_advancement()
+            self.advance()
+
+            node = result.register(self.comp_expr())
+            if result.error:
+                return result
+            return result.success(UnaryOperationNode(operator_token, node))
+
+        node = result.register(self.binary_operation(self.arith_expr, (TT_EQUALS_EQUALS, TT_NOT_EQUALS, TT_LESS_THAN,
+                                                                       TT_GREATER_THAN, TT_LESS_THAN_EQUAL, TT_GREATER_THAN_EQUAL)))
+
+        if result.error:
+            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end, "Expected int, float, identifier, '+', '-', '(', 'NOT'"))
+        return result.success(node)
+
     def expression(self):
         result = ParseResult()
         if self.current_token.matches(TT_KEYWORD, "VAR"):
@@ -396,7 +487,7 @@ class Parser:
                 return result
             return result.success(VariableAssignNode(var_name, expression))
 
-        node = result.register(self.binary_operation(self.term, (TT_PLUS, TT_MINUS)))
+        node = result.register(self.binary_operation(self.comp_expr, ((TT_KEYWORD, "AND"), (TT_KEYWORD, "OR"))))
         if result.error:
             return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
                                                      "Expected 'VAR', int, float, identifier, '+', '-' or '('"))
@@ -410,7 +501,7 @@ class Parser:
         if result.error:
             return result
 
-        while self.current_token.type in operators:
+        while self.current_token.type in operators or (self.current_token.type, self.current_token.value) in operators:
             operator_token = self.current_token
             result.register_advancement()
             self.advance()
@@ -479,7 +570,43 @@ class Number:
 
     def power_of(self, other):
         if isinstance(other, Number):
-            return Number(self.value ** other.value).set_context(self.context), None
+            return Number(int(self.value ** other.value)).set_context(self.context), None
+
+    def get_comparison_eq(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value == other.value)).set_context(self.context), None
+
+    def get_comparison_ne(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value != other.value)).set_context(self.context), None
+
+    def get_comparison_lt(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value < other.value)).set_context(self.context), None
+
+    def get_comparison_gt(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value > other.value)).set_context(self.context), None
+
+    def get_comparison_lte(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value <= other.value)).set_context(self.context), None
+
+    def get_comparison_gte(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value >= other.value)).set_context(self.context), None
+
+    def anded_by(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value and other.value)).set_context(self.context), None
+
+    def ored_by(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.value or other.value)).set_context(self.context), None
+
+    def notted(self, other):
+        if isinstance(other, Number):
+            return Number(1 if self.value == 0 else 0).set_context(self.context), None
 
     def copy(self):
         copy = Number(self.value)
@@ -576,6 +703,22 @@ class Interpreter:
             result, error = left.divided_by(right)
         elif node.operator_token.type == TT_POWER_OF:
             result, error = left.power_of(right)
+        elif node.operator_token.type == TT_EQUALS_EQUALS:
+            result, error = left.get_comparison_eq(right)
+        elif node.operator_token.type == TT_NOT_EQUALS:
+            result, error = left.get_comparison_ne(right)
+        elif node.operator_token.type == TT_LESS_THAN:
+            result, error = left.get_comparison_lt(right)
+        elif node.operator_token.type == TT_GREATER_THAN:
+            result, error = left.get_comparison_gt(right)
+        elif node.operator_token.type == TT_LESS_THAN_EQUAL:
+            result, error = left.get_comparison_lte(right)
+        elif node.operator_token.type == TT_GREATER_THAN_EQUAL:
+            result, error = left.get_comparison_gte(right)
+        elif node.operator_token.matches(TT_KEYWORD, "AND"):
+            result, error = left.anded_by(right)
+        elif node.operator_token.matches(TT_KEYWORD, "OR"):
+            result, error = left.ored_by(right)
 
         if error:
             return run_time_result.failure(error)
@@ -592,6 +735,8 @@ class Interpreter:
 
         if node.operator_token.type == TT_MINUS:
             number, error = number.multiplied_by(Number(-1))
+        elif node.operator_token.matches(TT_KEYWORD, "NOT"):
+            number, error = number.notted()
 
         if error:
             run_time_result.failure(error)
@@ -602,7 +747,9 @@ class Interpreter:
 # RUN
 
 global_symbol_table = SymbolTable()
-global_symbol_table.set("null", Number(0))
+global_symbol_table.set("NULL", Number(0))
+global_symbol_table.set("TRUE", Number(1))
+global_symbol_table.set("FALSE", Number(0))
 
 
 def run(file_name, text):

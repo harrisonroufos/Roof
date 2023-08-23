@@ -1,5 +1,10 @@
 expression  : KEYWORD:VAR IDENTIFIER EQUALS expression
-            : term ((PLUS|MINUS) term)*
+            : comp-expr ((KEYWORD:AND|KEYWORD:OR) comp-expr)*
+
+comp-expr   : NOT comp-expr
+            : arith-expr ((EQUALS_EQUALS|LESS_THAN|GREATER_THAN|LESS_THAN_EQUALS|GREATER_THAN_EQUALS|) arith-expr)*
+
+arith-expr  : term ((PLUS|MINUS) term)*
 
 term        : factor ((MULTIPLY|DIV) factor)*
 
@@ -10,6 +15,8 @@ power       : atom (POWER_OF factor)*
 
 atom        : INT|FLOAT|IDENTIFIER
             : LBRACKET expression RBRACKET
+
+
 
 
 
