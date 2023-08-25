@@ -11,10 +11,17 @@ term        : factor ((MULTIPLY|DIV) factor)*
 factor      : (PLUS|MINUS) factor
             :power
 
-power       : atom (POWER_OF factor)*
+power       : call (POWER_OF factor)*
+
+call        : atom (LBRACKET (expr (COMMA expr)*)? RBRACKET)?
 
 atom        : INT|FLOAT|IDENTIFIER
             : LBRACKET expression RBRACKET
+            : if-expr
+            : for-expr
+            : while-expr
+            : func-def
+
 
 if-expr     : KEYWORD:IF expr KEYWORD:THEN expr
               (KEYWORD:ELIF expr KEYWORD:THEN expr)*
@@ -25,6 +32,8 @@ for-expr    : KEYWORD:FOR IDENTIFIER EQ expr KEYWORD:TO expr
 
 while-expr  : KEYWORD:WHILE expr KEYWORD:THEN expr
 
-
+func-def    : KEYWORD:FUN IDENTIFIER?
+            : LBRACKET (IDENTIFIER (COMMA IDENTIFIER)*)? RBRACKET
+            : ARROW EXPR
 
 
