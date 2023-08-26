@@ -15,7 +15,7 @@ power       : call (POWER_OF factor)*
 
 call        : atom (LBRACKET (expr (COMMA expr)*)? RBRACKET)?
 
-atom        : INT|FLOAT|IDENTIFIER
+atom        : INT|FLOAT|STRING|IDENTIFIER
             : LBRACKET expression RBRACKET
             : if-expr
             : for-expr
