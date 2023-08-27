@@ -650,41 +650,6 @@ class Parser:
             cases.extend(new_cases)
 
         return result.success((cases, else_case))
-        # expr = result.register(self.expression())
-        # if result.error:
-        #     return result
-        # cases.append((condition, expr))
-        #
-        # while self.current_token.matches(TT_KEYWORD, "ELIF"):
-        #     result.register_advancement()
-        #     self.advance()
-        #
-        #     condition = result.register(self.expression())
-        #     if result.error:
-        #         return result
-        #
-        #     if not self.current_token.matches(TT_KEYWORD, "THEN"):
-        #         return result.failure(
-        #             InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
-        #                                f"Expected 'THEN'"))
-        #
-        #     result.register_advancement()
-        #     self.advance()
-        #
-        #     expr = result.register(self.expression())
-        #     if result.error:
-        #         return result
-        #     cases.append((condition, expr))
-        #
-        # if self.current_token.matches(TT_KEYWORD, "ELSE"):
-        #     result.register_advancement()
-        #     self.advance()
-        #
-        #     else_case = result.register(self.expression())
-        #     if result.error:
-        #         return result
-        #
-        # return result.success(IfNode(cases, else_case))
 
     def for_expr(self):
         result = ParseResult()
@@ -1906,7 +1871,7 @@ class Interpreter:
                 return result
 
         return result.success(Number.null if node.should_return_null else
-            List(elements).set_context(context).set_position(node.position_start, node.position_end))
+                              List(elements).set_context(context).set_position(node.position_start, node.position_end))
 
     def visit_WhileNode(self, node, context):
         result = RunTimeResults()
@@ -1924,7 +1889,7 @@ class Interpreter:
                 return result
 
         return result.success(Number.null if node.should_return_null else
-            List(elements).set_context(context).set_position(node.position_start, node.position_end))
+                              List(elements).set_context(context).set_position(node.position_start, node.position_end))
 
     def visit_FuncDefNode(self, node, context):
         result = RunTimeResults()
@@ -1932,8 +1897,9 @@ class Interpreter:
         body_node = node.body_node
         arg_names = [arg_name.value for arg_name in node.arg_name_tokens]
 
-        func_value = Function(func_name, body_node, arg_names, node.should_return_null).set_context(context).set_position(node.position_start,
-                                                                                                 node.position_end)
+        func_value = Function(func_name, body_node, arg_names, node.should_return_null).set_context(
+            context).set_position(node.position_start,
+                                  node.position_end)
         if node.var_name_token:
             context.symbol_table.set(func_name, func_value)
 
