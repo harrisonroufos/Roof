@@ -120,8 +120,9 @@ TT_LESS_THAN_EQUAL = "LESS_THAN_EQUAL"
 TT_GREATER_THAN_EQUAL = "GREATER_THAN_EQUAL"
 TT_COMMA = "COMMA"
 TT_ARROW = "ARROW"
+TT_NEWLINE = "NEWLINE"
 
-KEYWORDS = ["VAR", "AND", "OR", "NOT", "IF", "THEN", "ELIF", "ELSE", "FOR", "TO", "STEP", "WHILE", "FUNC"]
+KEYWORDS = ["VAR", "AND", "OR", "NOT", "IF", "THEN", "ELIF", "ELSE", "FOR", "TO", "STEP", "WHILE", "FUNC", "END"]
 
 
 class Token:
@@ -164,6 +165,9 @@ class Lexer:
 
         while self.current_char != None:
             if self.current_char in " \t":
+                self.advance()
+            elif self.current_char in ';\n':
+                tokens.append(Token(TT_NEWLINE, position_start=self.position))
                 self.advance()
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
@@ -415,35 +419,39 @@ class IfNode:
         self.else_case = else_case
 
         self.position_start = self.cases[0][0]
-        self.position_end = (self.else_case or self.cases[len(self.cases) - 1][0]).position_end
+        self.position_end = (self.else_case or self.cases[len(self.cases) - 1])[0].position_end
 
 
 class ForNode:
-    def __init__(self, var_name_token, start_value_node, end_value_node, step_value_node, body_node):
+    def __init__(self, var_name_token, start_value_node, end_value_node, step_value_node, body_node,
+                 should_return_null):
         self.var_name_token = var_name_token
         self.start_value_node = start_value_node
         self.end_value_node = end_value_node
         self.step_value_node = step_value_node
         self.body_node = body_node
+        self.should_return_null = should_return_null
 
         self.position_start = self.var_name_token.position_start
         self.position_end = self.body_node.position_end
 
 
 class WhileNode:
-    def __init__(self, condition_node, body_node):
+    def __init__(self, condition_node, body_node, should_return_null):
         self.condition_node = condition_node
         self.body_node = body_node
+        self.should_return_null = should_return_null
 
         self.position_start = self.condition_node.position_start
         self.position_end = self.body_node.position_end
 
 
 class FuncDefNode:
-    def __init__(self, var_name_token, arg_name_tokens, body_node):
+    def __init__(self, var_name_token, arg_name_tokens, body_node, should_return_null):
         self.var_name_token = var_name_token
         self.arg_name_tokens = arg_name_tokens
         self.body_node = body_node
+        self.should_return_null = should_return_null
 
         if self.var_name_token:
             self.position_start = self.var_name_token.position_start
@@ -475,6 +483,7 @@ class ParseResult:
         self.error = None
         self.node = None
         self.advance_count = 0
+        self.to_reverse_count = 0
 
     def register_advancement(self):
         self.advance_count += 1
@@ -494,6 +503,12 @@ class ParseResult:
             self.error = error
         return self
 
+    def try_register(self, result):
+        if result.error:
+            self.to_reverse_count = result.advance_count
+            return None
+        return self.register(result)
+
 
 # PARSER
 class Parser:
@@ -504,12 +519,20 @@ class Parser:
 
     def advance(self):
         self.token_index += 1
-        if self.token_index < len(self.tokens):
+        self.update_current_token()
+        return self.current_token
+
+    def reverse(self, amount=1):
+        self.token_index -= amount
+        self.update_current_token()
+        return self.current_token
+
+    def update_current_token(self):
+        if self.token_index >= 0 and self.token_index < len(self.tokens):
             self.current_token = self.tokens[self.token_index]
-            return self.current_token
 
     def parse(self):
-        result = self.expression()
+        result = self.statements()
         if not result.error and self.current_token.type != TT_END_OF_FILE:
             return result.failure(InvalidSyntaxError(
                 self.current_token.position_start, self.current_token.position_end,
@@ -519,13 +542,69 @@ class Parser:
 
     def if_expr(self):
         result = ParseResult()
+        all_cases = result.register(self.if_expr_cases('IF'))
+        if result.error:
+            return result
+        cases, else_cases = all_cases
+        return result.success(IfNode(cases, else_cases))
+
+    def if_expr_else(self):
+        result = ParseResult()
+        else_case = None
+
+        if self.current_token.matches(TT_KEYWORD, 'ELSE'):
+            result.register_advancement()
+            self.advance()
+
+            if self.current_token.type == TT_NEWLINE:
+                result.register_advancement()
+                self.advance()
+
+                statements = result.register(self.statements())
+                if result.error:
+                    return result
+                else_case = (statements, True)
+
+                if self.current_token.matches(TT_KEYWORD, 'END'):
+                    result.register_advancement()
+                    self.advance()
+                else:
+                    return result.failure(
+                        InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+                                           "Expected 'END'"))
+            else:
+                expr = result.register(self.expression())
+            if result.error:
+                return result
+            else_case = (expr, False)
+
+        return result.success(else_case)
+
+    def if_expr_elif_or_else(self):
+        result = ParseResult()
+        cases, else_case = [], None
+        if self.current_token.matches(TT_KEYWORD, 'ELIF'):
+            all_cases = result.register(self.if_expr_elif())
+            if result.error:
+                return result
+            cases, else_case = all_cases
+        else:
+            else_case = result.register(self.if_expr_else())
+            if result.error:
+                return result
+        return result.success((cases, else_case))
+
+    def if_expr_elif(self):
+        return self.if_expr_cases('ELIF')
+
+    def if_expr_cases(self, case_keyword):
+        result = ParseResult()
         cases = []
         else_case = None
 
-        if not self.current_token.matches(TT_KEYWORD, "IF"):
+        if not self.current_token.matches(TT_KEYWORD, case_keyword):
             return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
-                                                     f"Expected 'IF'"))
-
+                                                     f"Expected '{case_keyword}'"))
         result.register_advancement()
         self.advance()
 
@@ -540,41 +619,72 @@ class Parser:
         result.register_advancement()
         self.advance()
 
-        expr = result.register(self.expression())
-        if result.error:
-            return result
-        cases.append((condition, expr))
-
-        while self.current_token.matches(TT_KEYWORD, "ELIF"):
+        if self.current_token.type == TT_NEWLINE:
             result.register_advancement()
             self.advance()
 
-            condition = result.register(self.expression())
+            statements = result.register(self.statements())
             if result.error:
                 return result
+            cases.append((condition, statements, True))
 
-            if not self.current_token.matches(TT_KEYWORD, "THEN"):
-                return result.failure(
-                    InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
-                                       f"Expected 'THEN'"))
-
-            result.register_advancement()
-            self.advance()
-
+            if self.current_token.matches(TT_KEYWORD, 'END'):
+                result.register_advancement()
+                self.advance()
+            else:
+                all_cases = result.register(self.if_expr_elif_or_else())
+                if result.error:
+                    return result
+                new_cases, else_case = all_cases
+                cases.extend(new_cases)
+        else:
             expr = result.register(self.expression())
             if result.error:
                 return result
-            cases.append((condition, expr))
+            cases.append((condition, expr, False))
 
-        if self.current_token.matches(TT_KEYWORD, "ELSE"):
-            result.register_advancement()
-            self.advance()
-
-            else_case = result.register(self.expression())
+            all_cases = result.register(self.if_expr_elif_or_else())
             if result.error:
                 return result
+            new_cases, else_case = all_cases
+            cases.extend(new_cases)
 
-        return result.success(IfNode(cases, else_case))
+        return result.success((cases, else_case))
+        # expr = result.register(self.expression())
+        # if result.error:
+        #     return result
+        # cases.append((condition, expr))
+        #
+        # while self.current_token.matches(TT_KEYWORD, "ELIF"):
+        #     result.register_advancement()
+        #     self.advance()
+        #
+        #     condition = result.register(self.expression())
+        #     if result.error:
+        #         return result
+        #
+        #     if not self.current_token.matches(TT_KEYWORD, "THEN"):
+        #         return result.failure(
+        #             InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+        #                                f"Expected 'THEN'"))
+        #
+        #     result.register_advancement()
+        #     self.advance()
+        #
+        #     expr = result.register(self.expression())
+        #     if result.error:
+        #         return result
+        #     cases.append((condition, expr))
+        #
+        # if self.current_token.matches(TT_KEYWORD, "ELSE"):
+        #     result.register_advancement()
+        #     self.advance()
+        #
+        #     else_case = result.register(self.expression())
+        #     if result.error:
+        #         return result
+        #
+        # return result.success(IfNode(cases, else_case))
 
     def for_expr(self):
         result = ParseResult()
@@ -633,11 +743,28 @@ class Parser:
         result.register_advancement()
         self.advance()
 
+        if self.current_token.type == TT_NEWLINE:
+            result.register_advancement()
+            self.advance()
+
+            body = result.register(self.statements())
+            if result.error:
+                return result
+
+            if not self.current_token.matches(TT_KEYWORD, 'END'):
+                return result.failure((InvalidSyntaxError(self.current_token.position_start,
+                                                          self.current_token.position_end, f"Expected 'END'")))
+
+            result.register_advancement()
+            self.advance()
+
+            return result.success(ForNode(var_name, start_value, end_value, step_value, body, True))
+
         body = result.register(self.expression())
         if result.error:
             return result
 
-        return result.success(ForNode(var_name, start_value, end_value, step_value, body))
+        return result.success(ForNode(var_name, start_value, end_value, step_value, body, False))
 
     def while_expr(self):
         result = ParseResult()
@@ -660,11 +787,28 @@ class Parser:
         result.register_advancement()
         self.advance()
 
+        if self.current_token.type == TT_NEWLINE:
+            result.register_advancement()
+            self.advance()
+
+            body = result.register(self.statements())
+            if result.error:
+                return result
+
+            if not self.current_token.matches(TT_KEYWORD, 'END'):
+                return result.failure((InvalidSyntaxError(self.current_token.position_start,
+                                                          self.current_token.position_end, f"Expected 'END'")))
+
+            result.register_advancement()
+            self.advance()
+
+            return result.success(WhileNode(condition, body, True))
+
         body = result.register(self.expression())
         if result.error:
             return result
 
-        return result.success(WhileNode(condition, body))
+        return result.success(WhileNode(condition, body, False))
 
     def func_def(self):
         result = ParseResult()
@@ -725,16 +869,34 @@ class Parser:
         result.register_advancement()
         self.advance()
 
-        if self.current_token.type != TT_ARROW:
+        if self.current_token.type == TT_ARROW:
+            result.register_advancement()
+            self.advance()
+            body = result.register(self.expression())
+            if result.error:
+                return result
+
+            return result.success(FuncDefNode(var_name_token, arg_name_tokens, body, False))
+
+        if self.current_token.type != TT_NEWLINE:
             return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
-                                                     f"Expected '->'"))
+                                                     f"Expected '->' or NEWLINE"))
+
         result.register_advancement()
         self.advance()
-        node_to_return = result.register(self.expression())
+
+        body = result.register(self.statements())
         if result.error:
             return result
 
-        return result.success(FuncDefNode(var_name_token, arg_name_tokens, node_to_return))
+        if not self.current_token.matches(TT_KEYWORD, 'END'):
+            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
+                                                     f"Expected 'END'"))
+
+        result.register_advancement()
+        self.advance()
+
+        return result.success(FuncDefNode(var_name_token, arg_name_tokens, body, True))
 
     def call(self):
         result = ParseResult()
@@ -924,6 +1086,41 @@ class Parser:
             return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
                                                      "Expected int, float, identifier, '+', '-', '(', '[' or 'NOT'"))
         return result.success(node)
+
+    def statements(self):
+        result = ParseResult()
+        statements = []
+        position_start = self.current_token.position_start.copy()
+
+        while self.current_token.type == TT_NEWLINE:
+            result.register_advancement()
+            self.advance()
+        statement = result.register(self.expression())
+        if result.error:
+            return result
+        statements.append(statement)
+
+        more_statements = True
+
+        while True:
+            new_line_count = 0
+            while self.current_token.type == TT_NEWLINE:
+                result.register_advancement()
+                self.advance()
+                new_line_count += 1
+            if new_line_count == 0:
+                more_statements = False
+
+            if not more_statements:
+                break
+
+            statement = result.try_register(self.expression())
+            if not statement:
+                self.reverse(result.to_reverse_count)
+                more_statements = False
+                continue
+            statements.append(statement)
+        return result.success(ListNode(statements, position_start, self.current_token.position_end.copy()))
 
     def expression(self):
         result = ParseResult()
@@ -1311,10 +1508,11 @@ class BaseFunction(Value):
 
 
 class Function(BaseFunction):
-    def __init__(self, name, body_node, arg_names):
+    def __init__(self, name, body_node, arg_names, should_return_null):
         super().__init__(name)
         self.body_node = body_node
         self.arg_names = arg_names
+        self.should_return_null = should_return_null
 
     def execute(self, args):
         result = RunTimeResults()
@@ -1328,10 +1526,10 @@ class Function(BaseFunction):
         value = result.register(interpreter.visit(self.body_node, new_context))
         if result.error:
             return result
-        return result.success(value)
+        return result.success(Number.null if self.should_return_null else value)
 
     def copy(self):
-        copy = Function(self.name, self.body_node, self.arg_names)
+        copy = Function(self.name, self.body_node, self.arg_names, self.should_return_null)
         copy.set_context(self.context)
         copy.set_position(self.position_start, self.position_end)
         return copy
@@ -1653,7 +1851,7 @@ class Interpreter:
     def visit_IfNode(self, node, context):
         result = RunTimeResults()
 
-        for condition, expr in node.cases:
+        for condition, expr, should_return_null in node.cases:
             condition_value = result.register(self.visit(condition, context))
             if result.error:
                 return result
@@ -1662,15 +1860,16 @@ class Interpreter:
                 expr_value = result.register(self.visit(expr, context))
                 if result.error:
                     return result
-                return result.success(expr_value)
+                return result.success(Number.null if should_return_null else expr_value)
 
         if node.else_case:
-            else_value = result.register(self.visit(node.else_case, context))
+            expr, should_return_null = node.else_case
+            else_value = result.register(self.visit(expr, context))
             if result.error:
                 return result
-            return result.success(else_value)
+            return result.success(Number.null if should_return_null else else_value)
 
-        return result.success(None)
+        return result.success(Number.null)
 
     def visit_ForNode(self, node, context):
         result = RunTimeResults()
@@ -1706,7 +1905,8 @@ class Interpreter:
             if result.error:
                 return result
 
-        return result.success(List(elements).set_context(context).set_position(node.position_start, node.position_end))
+        return result.success(Number.null if node.should_return_null else
+            List(elements).set_context(context).set_position(node.position_start, node.position_end))
 
     def visit_WhileNode(self, node, context):
         result = RunTimeResults()
@@ -1723,7 +1923,8 @@ class Interpreter:
             if result.error:
                 return result
 
-        return result.success(List(elements).set_context(context).set_position(node.position_start, node.position_end))
+        return result.success(Number.null if node.should_return_null else
+            List(elements).set_context(context).set_position(node.position_start, node.position_end))
 
     def visit_FuncDefNode(self, node, context):
         result = RunTimeResults()
@@ -1731,7 +1932,7 @@ class Interpreter:
         body_node = node.body_node
         arg_names = [arg_name.value for arg_name in node.arg_name_tokens]
 
-        func_value = Function(func_name, body_node, arg_names).set_context(context).set_position(node.position_start,
+        func_value = Function(func_name, body_node, arg_names, node.should_return_null).set_context(context).set_position(node.position_start,
                                                                                                  node.position_end)
         if node.var_name_token:
             context.symbol_table.set(func_name, func_value)

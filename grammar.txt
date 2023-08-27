@@ -1,3 +1,5 @@
+statements  : NEWLINE* expr (NEWLINE+ expr)* NEWLINE*
+
 expression  : KEYWORD:VAR IDENTIFIER EQUALS expression
             : comp-expr ((KEYWORD:AND|KEYWORD:OR) comp-expr)*
 
@@ -25,17 +27,32 @@ atom        : INT|FLOAT|STRING|IDENTIFIER
 
 list-expr   : LSQUARE (expr (COMMA expr)*)? RSQUARE
 
-if-expr     : KEYWORD:IF expr KEYWORD:THEN expr
-              (KEYWORD:ELIF expr KEYWORD:THEN expr)*
-              (KEYWORD:ELSE expr)?
+if-expr     : KEYWORD:IF expr KEYWORD:THEN
+              (expr if-expr-elif|if-expr-else?)
+            | (NEWLINE statements KEYWORD:END|if-expr-elif|if-expr-else
+
+
+if-expr-elif: KEYWORD:ELIF expr KEYWORD:THEN
+              (expr if-expr-elif|if-expr-else?)
+            | (NEWLINE statements KEYWORD:END|if-expr-elif|if-expr-else
+
+if-expr-else: KEYWORD:ELSE
+              expr
+            | (NEWLINE statements KEYWORD:END)
+
 
 for-expr    : KEYWORD:FOR IDENTIFIER EQ expr KEYWORD:TO expr
-              (KEYWORD:STEP expr)? KEYWORD:THEN expr
+              (KEYWORD:STEP expr)? KEYWORD:THEN
+              expr
+            | (NEWLINE statements KEYWORD:END)
 
-while-expr  : KEYWORD:WHILE expr KEYWORD:THEN expr
+while-expr  : KEYWORD:WHILE expr KEYWORD:THEN
+              expr
+            | (NEWLINE statements KEYWORD:END)
 
 func-def    : KEYWORD:FUN IDENTIFIER?
-            : LBRACKET (IDENTIFIER (COMMA IDENTIFIER)*)? RBRACKET
-            : ARROW EXPR
+              LBRACKET (IDENTIFIER (COMMA IDENTIFIER)*)? RBRACKET
+             (ARROW expr)
+            | (NEWLINE statements KEYWORD:END)
 
 
