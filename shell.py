@@ -2,8 +2,9 @@ import roof
 
 while True:
     text = input('roof > ')
-    if text.strip() == "": continue
-    result, error = roof.run(text, "<file_example>")
+    if text.strip() == "":
+        continue
+    result, error = roof.run('<file>', text)
 
     if error:
         print(error.as_string())

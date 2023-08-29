@@ -17,22 +17,21 @@ LETTERS_DIGITS = LETTERS + DIGITS
 # ERRORS
 class Error:
     def __init__(self, position_start, position_end, error_name, details):
-        self.error_name = error_name
-        self.details = details
         self.position_start = position_start
         self.position_end = position_end
+        self.error_name = error_name
+        self.details = details
 
     def as_string(self):
-        result = f"{self.error_name}: {self.details}"
-        result += f"\nFile {self.position_start.file_name}, line {self.position_start.line_number + 1}"
-        result += "\n\n" + string_with_arrows(self.position_start.file_text, self.position_start, self.position_end)
-
+        result = f'{self.error_name}: {self.details}\n'
+        result += f'File {self.position_start.file_name}, line {self.position_start.line_number + 1}'
+        result += '\n\n' + string_with_arrows(self.position_start.file_text, self.position_start, self.position_end)
         return result
 
 
 class IllegalCharError(Error):
     def __init__(self, position_start, position_end, details):
-        super().__init__(position_start, position_end, "Illegal Character", details)
+        super().__init__(position_start, position_end, 'Illegal Character', details)
 
 
 class InvalidSyntaxError(Error):
@@ -44,11 +43,6 @@ class RTError(Error):
     def __init__(self, position_start, position_end, details, context):
         super().__init__(position_start, position_end, "Runtime Error", details)
         self.context = context
-
-
-class ExpectedCharError:
-    def __init__(self, position_start, position_end, details):
-        super().__init__(position_start, position_end, "Expected Character", details)
 
     def as_string(self):
         result = self.generate_traceback()
@@ -67,6 +61,11 @@ class ExpectedCharError:
             context = context.parent
 
         return "Traceback (most recent call last):\n" + result
+
+
+class ExpectedCharError:
+    def __init__(self, position_start, position_end, details):
+        super().__init__(position_start, position_end, "Expected Character", details)
 
 
 # POSITION
@@ -149,7 +148,7 @@ class Token:
 # LEXER
 
 class Lexer:
-    def __init__(self, text, file_name):
+    def __init__(self, file_name, text):
         self.text = text
         self.position = Position(-1, 0, -1, file_name, text)
         self.current_char = None
@@ -166,6 +165,8 @@ class Lexer:
         while self.current_char != None:
             if self.current_char in " \t":
                 self.advance()
+            elif self.current_char == "#":
+                self.skip_comment()
             elif self.current_char in ';\n':
                 tokens.append(Token(TT_NEWLINE, position_start=self.position))
                 self.advance()
@@ -335,6 +336,12 @@ class Lexer:
             token_type = TT_ARROW
 
         return Token(token_type, position_start=position_start, position_end=self.position)
+
+    def skip_comment(self):
+        self.advance()
+        while self.current_char != "\n":
+            self.advance()
+        self.advance()
 
 
 # NODES
@@ -1107,32 +1114,35 @@ class Parser:
         return result.success(ListNode(statements, position_start, self.current_token.position_end.copy()))
 
     def statement(self):
-        result = ParseResult()
+        res = ParseResult()
         position_start = self.current_token.position_start.copy()
-        if self.current_token.matches(TT_KEYWORD, "RETURN"):
-            result.register_advancement()
+
+        if self.current_token.matches(TT_KEYWORD, 'RETURN'):
+            res.register_advancement()
             self.advance()
 
-            expr = result.try_register(self.expression())
+            expr = res.try_register(self.expression())
             if not expr:
-                self.reverse(result.to_reverse_count)
-            return result.success(ReturnNode(expr, position_start, self.current_token.position_start.copy()))
+                self.reverse(res.to_reverse_count)
+            return res.success(ReturnNode(expr, position_start, self.current_token.position_start.copy()))
 
-        if self.current_token.matches(TT_KEYWORD, "CONTINUE"):
-            result.register_advancement()
+        if self.current_token.matches(TT_KEYWORD, 'CONTINUE'):
+            res.register_advancement()
             self.advance()
-            return result.success(ContinueNode(position_start, self.current_token.position_start.copy()))
+            return res.success(ContinueNode(position_start, self.current_token.position_start.copy()))
 
-        if self.current_token.matches(TT_KEYWORD, "BREAK"):
-            result.register_advancement()
+        if self.current_token.matches(TT_KEYWORD, 'BREAK'):
+            res.register_advancement()
             self.advance()
-            return result.success(BreakNode(position_start, self.current_token.position_start.copy()))
+            return res.success(BreakNode(position_start, self.current_token.position_start.copy()))
 
-        expr = result.register(self.expression())
-        if result.error:
-            return result.failure(InvalidSyntaxError(self.current_token.position_start, self.current_token.position_end,
-                                                     "Expected 'RETURN', 'CONTINUE', 'BREAK', 'VAR', 'IF', 'FOR', 'WHILE', 'FUNC', int, float, identifier, '+', '-', '(', '[' or 'NOT'"))
-        return result.success(expr)
+        expr = res.register(self.expression())
+        if res.error:
+            return res.failure(InvalidSyntaxError(
+                self.current_token.position_start, self.current_token.position_end,
+                "Expected 'RETURN', 'CONTINUE', 'BREAK', 'VAR', 'IF', 'FOR', 'WHILE', 'FUN', int, float, identifier, '+', '-', '(', '[' or 'NOT'"
+            ))
+        return res.success(expr)
 
     def expression(self):
         result = ParseResult()
@@ -1738,6 +1748,52 @@ class BuiltInFunction(BaseFunction):
 
     execute_extend.arg_names = ["listA", "listB"]
 
+    def execute_len(self, execute_context):
+        list = execute_context.symbol_table.get("list")
+        if not isinstance(list, List):
+            return RunTimeResults().failure(
+                RTError(self.position_start, self.position_end, "Argument must be list", execute_context))
+
+        return RunTimeResults().success(Number(len(list.elements)))
+
+    execute_len.arg_names = ["list"]
+
+    def execute_run(self, execute_context):
+        fn = execute_context.symbol_table.get("fn")
+
+        if not isinstance(fn, String):
+            return RunTimeResults().failure(RTError(
+                self.position_start, self.position_end,
+                "Second argument must be string",
+                execute_context
+            ))
+
+        fn = fn.value
+
+        try:
+            with open(fn, "r") as f:
+                script = f.read()
+        except Exception as e:
+            return RunTimeResults().failure(RTError(
+                self.position_start, self.position_end,
+                f"Failed to load script \"{fn}\"\n" + str(e),
+                execute_context
+            ))
+
+        _, error = run(fn, script)
+
+        if error:
+            return RunTimeResults().failure(RTError(
+                self.position_start, self.position_end,
+                f"Failed to finish executing script \"{fn}\"\n" +
+                error.as_string(),
+                execute_context
+            ))
+
+        return RunTimeResults().success(Number.null)
+
+    execute_run.arg_names = ["fn"]
+
 
 BuiltInFunction.print = BuiltInFunction("print")
 BuiltInFunction.print_return = BuiltInFunction("print_return")
@@ -1751,6 +1807,8 @@ BuiltInFunction.is_function = BuiltInFunction("is_function")
 BuiltInFunction.append = BuiltInFunction("append")
 BuiltInFunction.pop = BuiltInFunction("pop")
 BuiltInFunction.extend = BuiltInFunction("extend")
+BuiltInFunction.len = BuiltInFunction("len")
+BuiltInFunction.run = BuiltInFunction("run")
 
 
 # CONTEXT
@@ -2059,16 +2117,18 @@ global_symbol_table.set("IS_FUNC", BuiltInFunction.is_function)
 global_symbol_table.set("APPEND", BuiltInFunction.append)
 global_symbol_table.set("POP", BuiltInFunction.pop)
 global_symbol_table.set("EXTEND", BuiltInFunction.extend)
+global_symbol_table.set("LEN", BuiltInFunction.len)
+global_symbol_table.set("RUN", BuiltInFunction.run)
 
 
-def run(file_name, text):
+def run(filename, text):
     # Generate tokens
-    lexer = Lexer(file_name, text)
+    lexer = Lexer(filename, text)
     tokens, error = lexer.make_tokens()
     if error:
         return None, error
 
-    # Generate AST = abstract syntax tree
+    # Generate AST
     parser = Parser(tokens)
     ast = parser.parse()
     if ast.error:
@@ -2076,7 +2136,7 @@ def run(file_name, text):
 
     # Run program
     interpreter = Interpreter()
-    context = Context("<program>")
+    context = Context('<program>')
     context.symbol_table = global_symbol_table
     result = interpreter.visit(ast.node, context)
 

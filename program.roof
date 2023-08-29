@@ -1,0 +1,27 @@
+# My first program using my own language called Roof made in python
+
+FUNC plural(word) -> word + "s"
+
+FUNC join(elements, separator)
+ VAR result = ""
+ VAR len = LEN(elements)
+
+ FOR i = 0 TO len THEN
+  VAR result = result + elements/i
+  IF i != len -1 THEN VAR result = result + separator
+ END
+ RETURN result
+END
+
+FUNC map(elements, func)
+ VAR new_elements = []
+
+ FOR i = 0 TO LEN(elements) THEN
+  APPEND(new_elements, func(elements/i))
+ END
+ RETURN new_elements
+END
+
+FOR i = 2 TO 8 THEN
+ PRINT(join(map(["Apple", "like", "Orange"], plural), ", "))
+END
